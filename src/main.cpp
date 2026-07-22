@@ -5,6 +5,7 @@
 #include <BLEClient.h>
 #include "config.h"
 #include "ble_client.hpp"
+#include <esp_gap_ble_api.h>
 
 // --- ÇALIŞMA ZAMANI LOGLARI ŞALTERİ ---
 // İşlemciyi gerçek zamanlı buton okurken yormamak için false kalmalıdır.
@@ -70,6 +71,18 @@ bool connectToServer(BLEAdvertisedDevice* myDevice) {
         return false;
     }
     Serial.println("Sunucuya baglandi. BUTONA BASARAK HAREKET ETTIREBILIRSINIZ.");
+
+    // --- HIZ AŞIRTMA: Connection Interval'i (Randevu Aralığı) minimuma çekiyoruz ---
+    // DOĞRU VERİ TİPİ: esp_ble_gap_conn_params_t
+    esp_ble_conn_update_params_t conn_params;
+        memcpy(conn_params.bda, pClient->getPeerAddress().getNative(), sizeof(esp_bd_addr_t));
+        conn_params.min_int = 0x06; // 7.5 milisaniye
+        conn_params.max_int = 0x0C; // 15 milisaniye
+        conn_params.latency = 0;
+        conn_params.timeout = 400;  // 4 saniye
+        
+        esp_ble_gap_update_conn_params(&conn_params);
+        // ------------------------------------------------------------------------------
 
     // BAĞLANTI BAŞARILIYSA: MAC ADRESİNİ HAFIZAYA KAYDET
     String connectedMAC = myDevice->getAddress().toString().c_str();
@@ -165,6 +178,7 @@ void setup() {
     }
 
     // Kayıtlı MAC adresiyle sistemi başlat
+    BLEDevice::setMTU(512);
     bleClient.init(savedMAC);
 }
 
@@ -184,6 +198,7 @@ void loop() {
         bleClient.doConnect = false;
     }
 
+    // --- STRESS TEST (SPAM) KODU ---
     if (bleClient.connected) {
         int currentButtonState = digitalRead(BUTTON_PIN);
 
