@@ -9,7 +9,11 @@
 // --- ÇALIŞMA ZAMANI LOGLARI ŞALTERİ ---
 // İşlemciyi gerçek zamanlı buton okurken yormamak için false kalmalıdır.
 // Sadece gelen bildirimleri susturur, kurulum aşamaları gösterilmeye devam eder.
-#define SHOW_RUNTIME_LOGS true 
+#define SHOW_RUNTIME_LOGS false 
+// --- MAKİNE YANITLARINI DİNLEME (ÇİFT YÖNLÜ İLETİŞİM) ŞALTERİ ---
+// true  = Makineden gelen ok ve konum (MPos) bildirimlerini dinler (Ekranlı modeller için).
+// false = Sağır mod (Kör gönderim). Sadece komut yollar, dinlemeyi kapatarak hızı artırır.
+#define ENABLE_NOTIFICATIONS false
 
 // --- BUTON AYARLARI ---
 const int BUTTON_PIN = 4;
@@ -20,6 +24,12 @@ int lastButtonState = HIGH;
 // Sürekli basım (Jog) ayarları
 unsigned long lastJogTime = 0;
 const unsigned long jogInterval = 100; // Saniyede 5 komut için bekleme süresi (1000ms / 5 = 200ms)
+
+// --- HANDWHEEL SIMÜLASYONU (Biriktir ve Gönder) ---
+static int accumulatedTicks = 0;          // Çevrilen ama henüz yollanmayan tık sayısı
+static unsigned long lastSendTime = 0;
+const unsigned long sendInterval = 1000;    // 50ms'de bir biriken tıkları paketle ve yolla
+const float multiplier = 1;             // 1x ayarı: Her tık 0.1mm
 
 BLEHandwheelClient bleClient;
 static BLERemoteCharacteristic* pRemoteCharacteristicWrite = nullptr;
@@ -85,8 +95,13 @@ bool connectToServer(BLEAdvertisedDevice* myDevice) {
         return false;
     }
 
-    if (pRemoteCharacteristicNotify != nullptr && pRemoteCharacteristicNotify->canNotify()) {
-        pRemoteCharacteristicNotify->registerForNotify(notifyCallback);
+    if (ENABLE_NOTIFICATIONS) {
+        if (pRemoteCharacteristicNotify != nullptr && pRemoteCharacteristicNotify->canNotify()) {
+            pRemoteCharacteristicNotify->registerForNotify(notifyCallback);
+            Serial.println("Bildirimler acik. Makine dinleniyor...");
+        }
+    } else {
+        Serial.println("Sagir Mod aktif. Makine bildirimleri goz ardi edilecek.");
     }
 
     return true;
@@ -169,33 +184,33 @@ void loop() {
         bleClient.doConnect = false;
     }
 
-    // --- BUTON İLE KOMUT GÖNDERME (Akıcı Hareket ve Acil Duruş) ---
     if (bleClient.connected) {
         int currentButtonState = digitalRead(BUTTON_PIN);
 
-        // Durum 1: Butona YENİ basıldı
+        // 1. ADIM: SİMÜLASYON - Butona basıldığında el çarkı SOLA 10 TIK çevrilmiş gibi yap
         if (currentButtonState == LOW && lastButtonState == HIGH) {
             if ((millis() - lastDebounceTime) > debounceDelay) {
-                sendGCodeCommand(pRemoteCharacteristicWrite, "G21 G91 X-2 F700"); // Mesafeyi bol verdik
-                lastJogTime = millis();      
-                lastDebounceTime = millis(); 
-            }
-        } 
-        // Durum 2: Butona BASILI TUTULUYOR (100ms aralıkla)
-        else if (currentButtonState == LOW && lastButtonState == LOW) {
-            if ((millis() - lastJogTime) >= 100) {
-                sendGCodeCommand(pRemoteCharacteristicWrite, "G21 G91 X-2 F700");
-                lastJogTime = millis();
+                accumulatedTicks -= 5; // Sola doğru 5 tık birikti
+                lastDebounceTime = millis();
             }
         }
-        // Durum 3: Butondan EL ÇEKİLDİ (Anında durdur!)
-        else if (currentButtonState == HIGH && lastButtonState == LOW) {
-            // GRBL için anında durdurma (Feed Hold) komutu
-            // Rownd sistemi bunu direkt GRBL'ye iletiyorsa makine zınk diye durur.
-            sendGCodeCommand(pRemoteCharacteristicWrite, "!"); 
-        }
-        
         lastButtonState = currentButtonState;
+
+        // 2. ADIM: BİRİKENLERİ GÖNDERME (Encoder okumasından bağımsız çalışır)
+        if (accumulatedTicks != 0 && (millis() - lastSendTime) > sendInterval) {
+            
+            // Bekleyen tıkları milimetreye çevir
+            float moveDistance = accumulatedTicks * multiplier;
+            
+            // G-Code metnini oluştur (Örn: X-1.00)
+            String gcode = "G21 G91 X" + String(moveDistance, 2) + " F1000";
+            
+            sendGCodeCommand(pRemoteCharacteristicWrite, gcode);
+            
+            // Gönderdikten sonra birikimi sıfırla ve zamanlayıcıyı güncelle
+            accumulatedTicks = 0; 
+            lastSendTime = millis();
+        }
     }
 
     delay(1);
