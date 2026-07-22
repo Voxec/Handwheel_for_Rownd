@@ -1,10 +1,15 @@
 #include <Arduino.h>
-#include <Preferences.h> // ESP32 Flaş Bellek Kütüphanesi
+#include <Preferences.h> 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEClient.h>
 #include "config.h"
 #include "ble_client.hpp"
+
+// --- ÇALIŞMA ZAMANI LOGLARI ŞALTERİ ---
+// İşlemciyi gerçek zamanlı buton okurken yormamak için false kalmalıdır.
+// Sadece gelen bildirimleri susturur, kurulum aşamaları gösterilmeye devam eder.
+#define SHOW_RUNTIME_LOGS true 
 
 // --- BUTON AYARLARI ---
 const int BUTTON_PIN = 4;
@@ -23,45 +28,46 @@ String savedMAC = "";
 static String lastResponse = "";
 
 static void notifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
-    String response = "";
-    for (size_t i = 0; i < length; i++) {
-        response += (char)pData[i];
-    }
-    
-    // Satır sonundaki görünmez karakterleri (\r, \n) ve boşlukları temizleyelim
-    response.trim(); 
-
-    // Gelen mesaj boş değilse ve bir önceki mesajla aynı değilse ekrana yazdır
-    if (response.length() > 0 && response != lastResponse) {
-        DEBUG_PRINT("Yanit: ");
-        DEBUG_PRINTLN(response);
-        lastResponse = response;
+    // Sadece SHOW_RUNTIME_LOGS true ise burası işlemciyi meşgul eder
+    if (SHOW_RUNTIME_LOGS) {
+        String response = "";
+        for (size_t i = 0; i < length; i++) {
+            response += (char)pData[i];
+        }
+        // Satır sonundaki görünmez karakterleri (\r, \n) ve boşlukları temizleyelim
+        response.trim(); 
+        // Gelen mesaj boş değilse ve bir önceki mesajla aynı değilse ekrana yazdır
+        if (response.length() > 0 && response != lastResponse) {
+            Serial.print("Yanit: ");
+            Serial.println(response);
+            lastResponse = response;
+        }
     }
 }
 
 // Sunucuya Bağlantı Kurma
 bool connectToServer(BLEAdvertisedDevice* myDevice) {
-    DEBUG_PRINT("Sunucuya baglaniliyor: ");
-    DEBUG_PRINTLN(myDevice->getAddress().toString().c_str());
+    Serial.print("Sunucuya baglaniliyor: ");
+    Serial.println(myDevice->getAddress().toString().c_str());
 
     pClient = BLEDevice::createClient();
     if (!pClient->connect(myDevice)) {
-        DEBUG_PRINTLN("Sunucuya baglanilamadi!");
+        Serial.println("Sunucuya baglanilamadi!");
         return false;
     }
-    DEBUG_PRINTLN("Sunucuya baglandi. BUTONA BASARAK HAREKET ETTIREBILIRSINIZ.");
+    Serial.println("Sunucuya baglandi. BUTONA BASARAK HAREKET ETTIREBILIRSINIZ.");
 
     // BAĞLANTI BAŞARILIYSA: MAC ADRESİNİ HAFIZAYA KAYDET
     String connectedMAC = myDevice->getAddress().toString().c_str();
     if (savedMAC != connectedMAC) {
         preferences.putString("mac", connectedMAC);
         savedMAC = connectedMAC;
-        DEBUG_PRINTLN("Cihaz hafizaya kaydedildi. Gelecek sefer otomatik baglanilacak.");
+        Serial.println("Cihaz hafizaya kaydedildi. Gelecek sefer otomatik baglanilacak.");
     }
 
     BLERemoteService* pRemoteService = pClient->getService(BLEUUID(SERVICE_UUID.c_str()));
     if (pRemoteService == nullptr) {
-        DEBUG_PRINTLN("Servis bulunamadi!");
+        Serial.println("Servis bulunamadi!");
         pClient->disconnect();
         return false;
     }
@@ -70,7 +76,7 @@ bool connectToServer(BLEAdvertisedDevice* myDevice) {
     pRemoteCharacteristicNotify = pRemoteService->getCharacteristic(BLEUUID(CHARACTERISTIC_NOTIFY.c_str()));
 
     if (pRemoteCharacteristicWrite == nullptr) {
-        DEBUG_PRINTLN("Write karakteristigi bulunamadi!");
+        Serial.println("Write karakteristigi bulunamadi!");
         pClient->disconnect();
         return false;
     }
@@ -91,8 +97,8 @@ void checkSerialCommands() {
         if (input.length() == 0) return;
 
         if (input == "RESCAN") { 
-            DEBUG_PRINTLN("\n--- RESCAN KOMUTU ALINDI ---");
-            DEBUG_PRINTLN("Hafiza siliniyor, yeni cihaz aranacak...");
+            Serial.println("\n--- RESCAN KOMUTU ALINDI ---");
+            Serial.println("Hafiza siliniyor, yeni cihaz aranacak...");
             
             // Flaş bellekten MAC'i sil
             preferences.remove("mac"); 
@@ -112,11 +118,11 @@ void checkSerialCommands() {
             
             if (selection >= 0 && selection < (int)bleClient.foundDevices.size()) {
                 bleClient.selectedDevice = new BLEAdvertisedDevice(bleClient.foundDevices[selection]);
-                DEBUG_PRINT("Secilen cihaz aliniyor: ");
-                DEBUG_PRINTLN(bleClient.selectedDevice->getAddress().toString().c_str());
+                Serial.print("Secilen cihaz aliniyor: ");
+                Serial.println(bleClient.selectedDevice->getAddress().toString().c_str());
                 bleClient.doConnect = true;
             } else {
-                DEBUG_PRINTLN("Gecersiz secim! Tekrar deneyin.");
+                Serial.println("Gecersiz secim! Tekrar deneyin.");
             }
         }
     }
@@ -133,10 +139,10 @@ void setup() {
     delay(1000);
     
     if (savedMAC != "") {
-        DEBUG_PRINT("Hafizada kayitli cihaz var: ");
-        DEBUG_PRINTLN(savedMAC);
+        Serial.print("Hafizada kayitli cihaz var: ");
+        Serial.println(savedMAC);
     } else {
-        DEBUG_PRINTLN("Hafizada cihaz yok. Yeni kurulum yapilacak.");
+        Serial.println("Hafizada cihaz yok. Yeni kurulum yapilacak.");
     }
 
     // Kayıtlı MAC adresiyle sistemi başlat
@@ -147,13 +153,12 @@ void loop() {
     // Seri porttan gelen özel komutları (RESCAN) dinle
     checkSerialCommands();
 
-
     if (bleClient.doConnect) {
         if (bleClient.selectedDevice != nullptr && connectToServer(bleClient.selectedDevice)) {
-            DEBUG_PRINTLN("Baglanti isleme alindi!");
+            Serial.println("Baglanti isleme alindi!");
             bleClient.connected = true;
         } else {
-            DEBUG_PRINTLN("Baglanti basarisiz. Tekrar taraniyor...");
+            Serial.println("Baglanti basarisiz. Tekrar taraniyor...");
             bleClient.connected = false;
             bleClient.startScan();
         }

@@ -115,30 +115,8 @@ public:
         DEBUG_PRINTLN("Baglanmak istediginiz cihazin numarasini (0, 1, ...) gonderin:");
         scanDone = true;
     }
-
-    void handleSerialSelection() {
-        if (scanDone && !connected && !doConnect && Serial.available() > 0) {
-            String input = Serial.readStringUntil('\n');
-            input.trim();
-            
-            // Komut "RESCAN" değilse ve boş değilse seçim işlemi yap
-            if (input.length() > 0 && input != "RESCAN") {
-                int selection = input.toInt(); 
-                
-                if (selection >= 0 && selection < (int)foundDevices.size()) {
-                    selectedDevice = new BLEAdvertisedDevice(foundDevices[selection]);
-                    DEBUG_PRINT("Secilen cihaz aliniyor: ");
-                    DEBUG_PRINTLN(selectedDevice->getAddress().toString().c_str());
-                    doConnect = true;
-                } else {
-                    DEBUG_PRINTLN("Gecersiz secim! Tekrar deneyin.");
-                }
-            }
-        }
-    }
 };
 
-// G-code komutunu Raspberry Pi'ye göndermek için yardımcı fonksiyon
 void sendGCodeCommand(BLERemoteCharacteristic* pRemoteCharacteristic, String gcodeCommand) {
     // 1. Önce beklenen başlık (header) kısmını oluşturuyoruz
     String header = "{\"type\":\"command\"}\n";
