@@ -5,6 +5,12 @@
 #include "config.h"
 #include "ble_client.hpp"
 
+// --- BUTON AYARLARI ---
+const int BUTTON_PIN = 4; // Butonu GPIO 4 ve GND arasına bağla
+unsigned long lastDebounceTime = 0;
+const unsigned long debounceDelay = 150; // 150ms ark filtresi
+int lastButtonState = HIGH;
+
 BLEHandwheelClient bleClient;
 static BLERemoteCharacteristic* pRemoteCharacteristicWrite = nullptr;
 static BLERemoteCharacteristic* pRemoteCharacteristicNotify = nullptr;
@@ -25,18 +31,8 @@ static void notifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, ui
     // Gelen mesaj boş değilse ve bir önceki mesajla aynı değilse ekrana yazdır
     if (response.length() > 0 && response != lastResponse) {
         
-        // EĞER MAKİNE HAREKET EDERKEN EKRAN YİNE DONARSA:
-        // GRBL sürekli "<Idle|MPos..." veya "[GC:..." gibi durum raporları atar.
-        // Konum sürekli değiştiği için "tekrar eden" mesaj filtresinden kaçıp ekranı kilitleyebilir.
-        // Eğer böyle bir sorun yaşarsan aşağıdaki iki satırın başındaki "//" işaretlerini kaldırıp
-        // bu durum bildirimlerini tamamen susturabilirsin:
-        
-        // if (response.startsWith("<") || response.startsWith("[")) return;
-
         Serial.print("Yanit: ");
         Serial.println(response);
-        
-        // Yeni mesajı hafızaya al
         lastResponse = response;
     }
 }
@@ -51,7 +47,7 @@ bool connectToServer(BLEAdvertisedDevice* myDevice) {
         Serial.println("Sunucuya baglanilamadi!");
         return false;
     }
-    Serial.println("Sunucuya baglandi.");
+    Serial.println("Sunucuya baglandi. BUTONA BASARAK HAREKET ETTIREBILIRSINIZ.");
 
     BLERemoteService* pRemoteService = pClient->getService(BLEUUID(SERVICE_UUID.c_str()));
     if (pRemoteService == nullptr) {
@@ -78,11 +74,16 @@ bool connectToServer(BLEAdvertisedDevice* myDevice) {
 
 void setup() {
     Serial.begin(115200);
+    
+    // Butonu dahili dirençle kur
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    
     delay(1000);
     bleClient.init();
 }
 
 void loop() {
+    // Bağlantı kurulana kadar seri porttan cihaz seçimi yapılır
     bleClient.handleSerialSelection();
 
     if (bleClient.doConnect) {
@@ -97,15 +98,22 @@ void loop() {
         bleClient.doConnect = false;
     }
 
-    // Komut gönderme kısmı - Seri portu şişirmeyecek şekilde optimize edildi
-    if (bleClient.connected && Serial.available() > 0) {
-        String inputLine = Serial.readStringUntil('\n');
-        inputLine.trim();
-        if (inputLine.length() > 0) {
-            sendGCodeCommand(pRemoteCharacteristicWrite, inputLine);
-            delay(50); // İşlemcinin nefes alması için kısa bekleme
+    // --- BUTON İLE KOMUT GÖNDERME ---
+    if (bleClient.connected) {
+        int currentButtonState = digitalRead(BUTTON_PIN);
+
+        // Butona basıldığında (Pull-up olduğu için LOW)
+        if (currentButtonState == LOW && lastButtonState == HIGH) {
+            if ((millis() - lastDebounceTime) > debounceDelay) {
+                
+                // Anında komutu yolla
+                sendGCodeCommand(pRemoteCharacteristicWrite, "G21 G91 X-1 F700");
+                
+                lastDebounceTime = millis();
+            }
         }
+        lastButtonState = currentButtonState;
     }
 
-    delay(10);
+    delay(1); // İşlemciyi kitlememek için minimal bekleme
 }
