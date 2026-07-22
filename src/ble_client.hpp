@@ -9,14 +9,24 @@
 #include <vector>
 #include "config.h"
 
-// Ön bildirimler
-bool connectToServer(BLEAdvertisedDevice* myDevice);
+// --- SERİ PORT ŞALTERİ (DEBUG MODU) ---
+// Sistemi tamamen bağımsız hale getirmek için burayı false yapın.
+#define DEBUG_MODE true
+
+#if DEBUG_MODE
+  #define DEBUG_PRINT(x) Serial.print(x)
+  #define DEBUG_PRINTLN(x) Serial.println(x)
+#else
+  #define DEBUG_PRINT(x)
+  #define DEBUG_PRINTLN(x)
+#endif
 
 class BLEHandwheelClient {
 public:
     bool doConnect = false;
     bool connected = false;
     bool scanDone = false;
+    String targetMAC = ""; // Hafızadan gelecek olan hedef MAC adresi
     BLEAdvertisedDevice* selectedDevice = nullptr;
     std::vector<BLEAdvertisedDevice> foundDevices;
 
@@ -28,6 +38,18 @@ public:
         void onResult(BLEAdvertisedDevice advertisedDevice) {
             // Sadece Rownd servis UUID'sini yayan cihazları listeye alıyoruz
             if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(BLEUUID(SERVICE_UUID.c_str()))) {
+                String currentMAC = advertisedDevice.getAddress().toString().c_str();
+
+                // EĞER HAFIZADA KAYITLI BİR CİHAZ VARSA VE BUNA DENK GELDİYSEK:
+                if (parent->targetMAC.length() > 0 && currentMAC == parent->targetMAC) {
+                    DEBUG_PRINTLN("\n[OTOMATIK] Kayitli cihaz bulundu, hemen baglaniliyor...");
+                    parent->selectedDevice = new BLEAdvertisedDevice(advertisedDevice);
+                    parent->doConnect = true;
+                    BLEDevice::getScan()->stop(); // Taramayı anında kes
+                    return; 
+                }
+
+                // Kayıtlı cihaz aranmıyorsa (veya bulunamadıysa) standart listelemeyi yap
                 bool exists = false;
                 for (auto& d : parent->foundDevices) {
                     if (d.getAddress().equals(advertisedDevice.getAddress())) {
@@ -37,20 +59,22 @@ public:
                 }
                 if (!exists) {
                     parent->foundDevices.push_back(advertisedDevice);
-                    Serial.print("[BULUNDU] MAC: ");
-                    Serial.print(advertisedDevice.getAddress().toString().c_str());
+                    DEBUG_PRINT("[BULUNDU] MAC: ");
+                    DEBUG_PRINT(currentMAC);
                     if (advertisedDevice.haveName()) {
-                        Serial.print(" | İsim: ");
-                        Serial.print(advertisedDevice.getName().c_str());
+                        DEBUG_PRINT(" | Isim: ");
+                        DEBUG_PRINT(advertisedDevice.getName().c_str());
                     }
-                    Serial.println();
+                    DEBUG_PRINTLN("");
                 }
             }
         }
     };
 
-    void init() {
-        Serial.println("Sanal Handwheel Baslatiliyor...");
+    // Init fonksiyonu artık hafızadaki MAC'i parametre alıyor
+    void init(String savedMAC) {
+        targetMAC = savedMAC;
+        DEBUG_PRINTLN("Sanal Handwheel Baslatiliyor...");
         BLEDevice::init("");
         startScan();
     }
@@ -59,52 +83,56 @@ public:
         foundDevices.clear();
         scanDone = false;
         selectedDevice = nullptr;
+        doConnect = false;
         
         BLEScan* pBLEScan = BLEDevice::getScan();
         pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(this));
         pBLEScan->setActiveScan(true);
-        Serial.println("Cevre taraniyor (5 saniye)...");
+        DEBUG_PRINTLN("Cevre taraniyor (5 saniye)...");
         pBLEScan->start(5, false);
         
-        printDeviceList();
+        // Eğer otomatik bağlanma tetiklenmediyse (doConnect hala false ise) listeyi yazdır
+        if (!doConnect) {
+            printDeviceList();
+        }
     }
 
     void printDeviceList() {
-        Serial.println("\n--- BULUNAN ROWND CIHAZLARI ---");
+        DEBUG_PRINTLN("\n--- BULUNAN ROWND CIHAZLARI ---");
         if (foundDevices.empty()) {
-            Serial.println("Hicbir cihaz bulunamadi. Tekrar taraniyor...");
+            DEBUG_PRINTLN("Hicbir cihaz bulunamadi. Tekrar taraniyor...");
             startScan();
             return;
         }
 
         for (size_t i = 0; i < foundDevices.size(); i++) {
-            Serial.print("[");
-            Serial.print(i);
-            Serial.print("] MAC: ");
-            Serial.print(foundDevices[i].getAddress().toString().c_str());
-            if (foundDevices[i].haveName()) {
-                Serial.print(" | İsim: ");
-                Serial.print(foundDevices[i].getName().c_str());
-            }
-            Serial.println();
+            DEBUG_PRINT("[");
+            DEBUG_PRINT(i);
+            DEBUG_PRINT("] MAC: ");
+            DEBUG_PRINT(foundDevices[i].getAddress().toString().c_str());
+            DEBUG_PRINTLN("");
         }
-        Serial.println("Baglanmak istedginiz cihazin numarasini (0, 1, ...) Serial Monitor'e yazip Enter'a basin:");
+        DEBUG_PRINTLN("Baglanmak istediginiz cihazin numarasini (0, 1, ...) gonderin:");
         scanDone = true;
     }
 
     void handleSerialSelection() {
         if (scanDone && !connected && !doConnect && Serial.available() > 0) {
-            int selection = Serial.parseInt();
-            // Satır sonu karakterlerini temizle
-            while(Serial.available() > 0) Serial.read();
-
-            if (selection >= 0 && selection < (int)foundDevices.size()) {
-                selectedDevice = new BLEAdvertisedDevice(foundDevices[selection]);
-                Serial.print("Secilen cihaz aliniyor: ");
-                Serial.println(selectedDevice->getAddress().toString().c_str());
-                doConnect = true;
-            } else {
-                Serial.println("Gecersiz secim! Tekrar deneyin.");
+            String input = Serial.readStringUntil('\n');
+            input.trim();
+            
+            // Komut "RESCAN" değilse ve boş değilse seçim işlemi yap
+            if (input.length() > 0 && input != "RESCAN") {
+                int selection = input.toInt(); 
+                
+                if (selection >= 0 && selection < (int)foundDevices.size()) {
+                    selectedDevice = new BLEAdvertisedDevice(foundDevices[selection]);
+                    DEBUG_PRINT("Secilen cihaz aliniyor: ");
+                    DEBUG_PRINTLN(selectedDevice->getAddress().toString().c_str());
+                    doConnect = true;
+                } else {
+                    DEBUG_PRINTLN("Gecersiz secim! Tekrar deneyin.");
+                }
             }
         }
     }
