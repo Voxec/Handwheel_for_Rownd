@@ -14,8 +14,12 @@
 // --- BUTON AYARLARI ---
 const int BUTTON_PIN = 4;
 unsigned long lastDebounceTime = 0;
-const unsigned long debounceDelay = 150;
+const unsigned long debounceDelay = 50;  // İlk basım ark filtresi (hızlı tepki için 50ms'ye düşürdük)
 int lastButtonState = HIGH;
+
+// Sürekli basım (Jog) ayarları
+unsigned long lastJogTime = 0;
+const unsigned long jogInterval = 100; // Saniyede 5 komut için bekleme süresi (1000ms / 5 = 200ms)
 
 BLEHandwheelClient bleClient;
 static BLERemoteCharacteristic* pRemoteCharacteristicWrite = nullptr;
@@ -165,16 +169,32 @@ void loop() {
         bleClient.doConnect = false;
     }
 
-    // --- BUTON İLE KOMUT GÖNDERME ---
+    // --- BUTON İLE KOMUT GÖNDERME (Akıcı Hareket ve Acil Duruş) ---
     if (bleClient.connected) {
         int currentButtonState = digitalRead(BUTTON_PIN);
 
+        // Durum 1: Butona YENİ basıldı
         if (currentButtonState == LOW && lastButtonState == HIGH) {
             if ((millis() - lastDebounceTime) > debounceDelay) {
-                sendGCodeCommand(pRemoteCharacteristicWrite, "G21 G91 X-1 F700");
-                lastDebounceTime = millis();
+                sendGCodeCommand(pRemoteCharacteristicWrite, "G21 G91 X-2 F700"); // Mesafeyi bol verdik
+                lastJogTime = millis();      
+                lastDebounceTime = millis(); 
+            }
+        } 
+        // Durum 2: Butona BASILI TUTULUYOR (100ms aralıkla)
+        else if (currentButtonState == LOW && lastButtonState == LOW) {
+            if ((millis() - lastJogTime) >= 100) {
+                sendGCodeCommand(pRemoteCharacteristicWrite, "G21 G91 X-2 F700");
+                lastJogTime = millis();
             }
         }
+        // Durum 3: Butondan EL ÇEKİLDİ (Anında durdur!)
+        else if (currentButtonState == HIGH && lastButtonState == LOW) {
+            // GRBL için anında durdurma (Feed Hold) komutu
+            // Rownd sistemi bunu direkt GRBL'ye iletiyorsa makine zınk diye durur.
+            sendGCodeCommand(pRemoteCharacteristicWrite, "!"); 
+        }
+        
         lastButtonState = currentButtonState;
     }
 
