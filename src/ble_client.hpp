@@ -118,6 +118,10 @@ public:
 };
 
 void sendGCodeCommand(BLERemoteCharacteristic* pRemoteCharacteristic, String gcodeCommand) {
+    if (pRemoteCharacteristic == nullptr) {
+        return;
+    }
+
     // 1. Önce beklenen başlık (header) kısmını oluşturuyoruz
     String header = "{\"type\":\"command\"}\n";
     
@@ -128,7 +132,11 @@ void sendGCodeCommand(BLERemoteCharacteristic* pRemoteCharacteristic, String gco
     String finalMessage = header + payload;
     
     // 4. Hazırlanan doğru formatı BLE üzerinden yolluyoruz
-    pRemoteCharacteristic->writeValue(finalMessage.c_str(), finalMessage.length());
+    if (pRemoteCharacteristic->canWriteNoResponse()) {
+        pRemoteCharacteristic->writeValue((uint8_t*)finalMessage.c_str(), finalMessage.length(), false);
+    } else {
+        pRemoteCharacteristic->writeValue(finalMessage.c_str(), finalMessage.length());
+    }
     
     // HIZ İÇİN KAPATILDI:
     // Serial.print("Gonderildi: ");

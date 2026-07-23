@@ -19,12 +19,15 @@
 // --- BUTON AYARLARI ---
 const int BUTTON_PIN = 4;
 unsigned long lastDebounceTime = 0;
-const unsigned long debounceDelay = 50;  // İlk basım ark filtresi (hızlı tepki için 50ms'ye düşürdük)
+const unsigned long debounceDelay = 10;  // Daha hızlı tepki için düşük debounce
 int lastButtonState = HIGH;
+int stableButtonState = HIGH;
 
 // Sürekli basım (Jog) ayarları
 unsigned long lastJogTime = 0;
-const unsigned long jogInterval = 100; // Saniyede 5 komut için bekleme süresi (1000ms / 5 = 200ms)
+const unsigned long jogInterval = 25; // Saniyede ~40 komut
+const float jogStepDistance = -0.02f;   // Küçük adım ile akıcı ve hassas hareket
+const int jogFeedRate = 1000;
 
 // --- HANDWHEEL SIMÜLASYONU (Biriktir ve Gönder) ---
 static int accumulatedTicks = 0;          // Çevrilen ama henüz yollanmayan tık sayısı
@@ -202,31 +205,48 @@ void loop() {
     if (bleClient.connected) {
         int currentButtonState = digitalRead(BUTTON_PIN);
 
-        // 1. ADIM: SİMÜLASYON - Butona basıldığında el çarkı SOLA 10 TIK çevrilmiş gibi yap
-        if (currentButtonState == LOW && lastButtonState == HIGH) {
-            if ((millis() - lastDebounceTime) > debounceDelay) {
-                accumulatedTicks -= 5; // Sola doğru 5 tık birikti
-                lastDebounceTime = millis();
+        // Debounce: fiziksel düğme zıplamasını filtrele
+        if (currentButtonState != lastButtonState) {
+            lastDebounceTime = millis();
+        }
+
+        if ((millis() - lastDebounceTime) > debounceDelay && currentButtonState != stableButtonState) {
+            stableButtonState = currentButtonState;
+
+            // Bırakma anında yeni komut üretimini anında durdur
+            if (stableButtonState == HIGH) {
+                lastJogTime = 0;
             }
         }
-        lastButtonState = currentButtonState;
 
-        // 2. ADIM: BİRİKENLERİ GÖNDERME (Encoder okumasından bağımsız çalışır)
-        if (accumulatedTicks != 0 && (millis() - lastSendTime) > sendInterval) {
-            
-            // Bekleyen tıkları milimetreye çevir
-            float moveDistance = accumulatedTicks * multiplier;
-            
-            // G-Code metnini oluştur (Örn: X-1.00)
-            String gcode = "G21 G91 X" + String(moveDistance, 2) + " F1000";
-            
-            sendGCodeCommand(pRemoteCharacteristicWrite, gcode);
-            
-            // Gönderdikten sonra birikimi sıfırla ve zamanlayıcıyı güncelle
-            accumulatedTicks = 0; 
-            lastSendTime = millis();
+        // Buton basılıyken el çarkı SOLA sürekli küçük adımlarla çevriliyormuş gibi yap
+        if (stableButtonState == LOW && pRemoteCharacteristicWrite != nullptr) {
+            if (lastJogTime == 0 || (millis() - lastJogTime) >= jogInterval) {
+                String gcode = "G1 G91 X" + String(jogStepDistance, 2) + " F" + String(jogFeedRate);
+                sendGCodeCommand(pRemoteCharacteristicWrite, gcode);
+                lastJogTime = millis();
+            }
         }
+
+        lastButtonState = currentButtonState;
     }
 
     delay(1);
 }
+
+
+
+
+/*
+    // --- STRESS TEST (SPAM) KODU ---
+    if (bleClient.connected) {
+        static unsigned long lastSpamTime = 0;
+        const unsigned long spamInterval = 10; // 10ms = Saniyede 100 komut!
+
+        if ((millis() - lastSpamTime) >= spamInterval) {
+            // Zararsız komut: G21 (Milimetre Modu). Harekete sebep olmaz, sadece ok döndürür.
+            sendGCodeCommand(pRemoteCharacteristicWrite, "G21");
+            lastSpamTime = millis();
+        }
+    }
+*/
