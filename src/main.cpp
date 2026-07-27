@@ -19,15 +19,15 @@
 // --- BUTON AYARLARI ---
 const int BUTTON_PIN = 4;
 unsigned long lastDebounceTime = 0;
-const unsigned long debounceDelay = 10;  // Daha hızlı tepki için düşük debounce
+const unsigned long debounceDelay = 50;  // Daha hızlı tepki için düşük debounce
 int lastButtonState = HIGH;
 int stableButtonState = HIGH;
 
 // Sürekli basım (Jog) ayarları
 unsigned long lastJogTime = 0;
-const unsigned long jogInterval = 25; // Saniyede ~40 komut
-const float jogStepDistance = -0.02f;   // Küçük adım ile akıcı ve hassas hareket
-const int jogFeedRate = 1000;
+unsigned long jogInterval = 150;        // Paket yollama aralığı (ms)
+float jogStepDistance = -0.05f;         // Tık başına eklenecek mesafe
+int jogFeedRate = 300;                  // Hareket hızı
 
 // --- HANDWHEEL SIMÜLASYONU (Biriktir ve Gönder) ---
 static int accumulatedTicks = 0;          // Çevrilen ama henüz yollanmayan tık sayısı
@@ -131,7 +131,21 @@ void checkSerialCommands() {
         
         if (input.length() == 0) return;
 
-        if (input == "RESCAN") { 
+        // --- CANLI TEST KOMUTLARI ---
+        if (input.startsWith("F") || input.startsWith("f")) {
+            jogFeedRate = input.substring(1).toInt();
+            Serial.print(">>> YENI HIZ (Feed Rate): "); Serial.println(jogFeedRate);
+        } 
+        else if (input.startsWith("I") || input.startsWith("i")) {
+            jogInterval = input.substring(1).toInt();
+            Serial.print(">>> YENI GONDERIM ARALIGI (Interval ms): "); Serial.println(jogInterval);
+        }
+        else if (input.startsWith("D") || input.startsWith("d")) {
+            jogStepDistance = input.substring(1).toFloat();
+            Serial.print(">>> YENI ADIM MESAFESI (Distance mm): "); Serial.println(jogStepDistance, 3);
+        }
+        // -----------------------------
+        else if (input == "RESCAN") { 
             Serial.println("\n--- RESCAN KOMUTU ALINDI ---");
             Serial.println("Hafiza siliniyor, yeni cihaz aranacak...");
             
@@ -201,7 +215,7 @@ void loop() {
         bleClient.doConnect = false;
     }
 
-    // --- STRESS TEST (SPAM) KODU ---
+    // --- STRESS TEST KODU YERINE: PAKETLEYICI (ACCUMULATOR) KODU ---
     if (bleClient.connected) {
         int currentButtonState = digitalRead(BUTTON_PIN);
 
@@ -212,19 +226,31 @@ void loop() {
 
         if ((millis() - lastDebounceTime) > debounceDelay && currentButtonState != stableButtonState) {
             stableButtonState = currentButtonState;
+        }
 
-            // Bırakma anında yeni komut üretimini anında durdur
-            if (stableButtonState == HIGH) {
-                lastJogTime = 0;
+        // 1. ADIM: SANAL ENCODER ÇEVİRME (Butona basılıyken tık biriktir)
+        static unsigned long lastTickTime = 0;
+        if (stableButtonState == LOW) {
+            if (millis() - lastTickTime >= 15) { // Her 15ms'de 1 sanal tık
+                accumulatedTicks++; 
+                lastTickTime = millis();
             }
         }
 
-        // Buton basılıyken el çarkı SOLA sürekli küçük adımlarla çevriliyormuş gibi yap
-        if (stableButtonState == LOW && pRemoteCharacteristicWrite != nullptr) {
-            if (lastJogTime == 0 || (millis() - lastJogTime) >= jogInterval) {
-                String gcode = "G1 G91 X" + String(jogStepDistance, 2) + " F" + String(jogFeedRate);
+        // 2. ADIM: BİRİKEN TIKLARI PAKETLEYİP (KALINLAŞTIRIP) YOLLAMA
+        static unsigned long lastPacketTime = 0;
+        if (millis() - lastPacketTime >= jogInterval) { 
+            lastPacketTime = millis();
+            
+            if (accumulatedTicks > 0 && pRemoteCharacteristicWrite != nullptr) {
+                float totalDistance = accumulatedTicks * jogStepDistance; 
+                
+                // --- DEĞİŞEN SATIR: millis() değeri G-Code yorumu olarak parantez içine eklendi ---
+                String gcode = "G1 G91 X" + String(totalDistance, 2) + " F" + String(jogFeedRate) + " (" + String(millis()) + ")";
+                
                 sendGCodeCommand(pRemoteCharacteristicWrite, gcode);
-                lastJogTime = millis();
+                
+                accumulatedTicks = 0; 
             }
         }
 
