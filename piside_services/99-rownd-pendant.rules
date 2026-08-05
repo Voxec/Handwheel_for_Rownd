@@ -1,0 +1,30 @@
+# udev kuralı — Rownd ESP32 Handwheel Pendant
+#
+# Bu kural, ESP32 pendant'ının /dev/ttyUSBx portuna sabit bir sembolik link
+# oluşturur: /dev/rownd-pendant
+#
+# Böylece bridge.js her zaman --pendant /dev/rownd-pendant kullanabilir;
+# cihazın kaçıncı ttyUSB olduğu önemli olmaz.
+#
+# Kurulum (Pi üzerinde):
+#   sudo cp 99-rownd-pendant.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#   ls -la /dev/rownd-pendant   ← sembolik linki doğrula
+#
+# Cihaz kimliği (doğrulandı: ESP32 çıkarılınca kaybolur):
+#   Vendor:  10c4  (Silicon Labs)
+#   Product: ea60  (CP210x UART Bridge)
+#   Chip:    CP2102 (NOT CP2102N)
+#   Serial:  0001  (fabrika default — bu kısımdır ESP32'yi tanıyan)
+#
+# NOT: CNC makinesi kontrolcüsü de 10c4:ea60'tır ama chip'i CP2102N
+# ve seri numarası "9c2e4ba0c06ef011a0974b9b1045c30f" (uzun).
+# Bu kural sadece seri "0001" olan ESP32'yi eşleştirir.
+
+SUBSYSTEM=="tty", \
+  ATTRS{idVendor}=="10c4", \
+  ATTRS{idProduct}=="ea60", \
+  ATTRS{serial}=="0001", \
+  SYMLINK+="rownd-pendant", \
+  MODE="0666"

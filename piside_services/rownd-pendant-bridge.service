@@ -1,0 +1,19 @@
+[Unit]
+Description=Rownd ESP32 USB-Serial handwheel bridge (cncjs peer client)
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=rownd
+Group=rownd
+WorkingDirectory=/opt/rownd-pendant-bridge
+ExecStart=/usr/bin/node /opt/rownd-pendant-bridge/bridge.js --pendant /dev/rownd-pendant
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=graphical.target

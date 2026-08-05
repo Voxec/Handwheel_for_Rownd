@@ -1,0 +1,19 @@
+{
+  "name": "rownd-pendant-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pi-side bridge: ESP32-S3 USB-Serial handwheel <-> Rownd's embedded cncjs (peer client over JWT-authed socket.io)",
+  "main": "bridge.js",
+  "scripts": {
+    "start": "node bridge.js",
+    "smoke": "node bridge.js --smoke"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.2",
+    "socket.io-client": "^2.5.0",
+    "serialport": "^12.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
