@@ -1,5 +1,10 @@
 # Pi Kurulum Kılavuzu — `bridge.js` (Raspberry Pi)
 
+journalctl -u rownd-pendant-bridge -f
+ls -la /dev/rownd-pendant
+lsusb
+
+
 Bu kılavuz, ESP32 el çarkı ile cncjs arasındaki köprü yazılımını (`bridge.js`) Raspberry Pi'ye kurar ve systemd servisi olarak çalıştırır.
 
 ---

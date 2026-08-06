@@ -385,7 +385,7 @@ async function handleBridgeCommand(state, line, replyToPendant) {
 function isRealtimeByte(ch) {
   const c = ch.charCodeAt(0);
   return c === 0x18 || c === 0x21 || c === 0x3F || c === 0x7E ||
-         c === 0x84 || c === 0x85 || (c >= 0x90 && c <= 0x9F);
+    c === 0x84 || c === 0x85 || (c >= 0x90 && c <= 0x9F);
 }
 
 // Keep ONLY realtime single-byte commands, drop all line content. Used to gate
@@ -489,23 +489,50 @@ function attachPendantSerial(state, devicePath, baudRate) {
 
   function openPendant() {
     dial = new SerialPort({ path: devicePath, baudRate });
+
+    // BOOT-SETTLE GUARD: Opening the serial port asserts DTR/RTS on the
+    // CP2102, which triggers the ESP32 auto-reset circuit (RTS→EN, DTR→GPIO0
+    // via capacitors on most dev boards). The bootloader then runs for ~1s
+    // and dumps binary garbage onto UART. If we forward that immediately, Grbl
+    // echoes it as [echo: PPPPP] / error:2 on every cold boot.
+    // Fix: de-assert DTR/RTS right away, discard all incoming bytes for
+    // BOOT_SETTLE_MS, flush the kernel buffer, then arm the watchdog.
+    const BOOT_SETTLE_MS = 2000;
+    let bootSettleDone = false;
+
     dial.on('open', () => {
-      log(`pendant serial: opened ${devicePath} @ ${baudRate}`);
-      lastPendantByte = Date.now();
+      log(`pendant serial: opened ${devicePath} @ ${baudRate} — boot settle ${BOOT_SETTLE_MS}ms`);
       watchdogTripped = false;
-      if (!hangWatchdog) {
-        hangWatchdog = setInterval(() => {
-          if (!dial || !dial.isOpen) return;
-          const silent = Date.now() - lastPendantByte;
-          if (silent > PENDANT_SILENCE_MS && !watchdogTripped) {
-            watchdogTripped = true;
-            try {
-              if (state.sendRaw('\x85'))
-                log(`pendant SILENT ${silent}ms (hang, USB still open) — JogCancel (0x85) fail-safe`);
-            } catch (e) { log(`hang-watchdog JogCancel failed: ${e.message}`); }
-          }
-        }, 200);
-      }
+
+      // De-assert RTS and DTR so the CP2102 does not hold EN/GPIO0 low.
+      dial.set({ rts: false, dtr: false }, (err) => {
+        if (err) log(`pendant: set RTS/DTR failed: ${err.message}`);
+      });
+
+      // After settle: flush bootloader garbage from the kernel buffer,
+      // then arm the watchdog and enable data forwarding.
+      setTimeout(() => {
+        if (!dial || !dial.isOpen) return;
+        dial.flush((err) => {
+          if (err) log(`pendant: flush error: ${err.message}`);
+        });
+        bootSettleDone = true;
+        lastPendantByte = Date.now();
+        if (!hangWatchdog) {
+          hangWatchdog = setInterval(() => {
+            if (!dial || !dial.isOpen) return;
+            const silent = Date.now() - lastPendantByte;
+            if (silent > PENDANT_SILENCE_MS && !watchdogTripped) {
+              watchdogTripped = true;
+              try {
+                if (state.sendRaw('\x85'))
+                  log(`pendant SILENT ${silent}ms (hang, USB still open) — JogCancel (0x85) fail-safe`);
+              } catch (e) { log(`hang-watchdog JogCancel failed: ${e.message}`); }
+            }
+          }, 200);
+        }
+        log('pendant: boot settle done — data forwarding enabled');
+      }, BOOT_SETTLE_MS);
     });
     dial.on('error', (e) => log(`pendant serial error: ${e.message}`));
     dial.on('close', () => {
@@ -523,42 +550,44 @@ function attachPendantSerial(state, devicePath, baudRate) {
       scheduleReconnect();
     });
     dial.on('data', (chunk) => {
-    // Filter out XON (0x11). Pendant emits it as a flow-control kickstart
-    // before status queries (legacy FluidNC habit), but Rownd's Grbl-ESP32
-    // doesn't recognise XON — treats the byte as line content, emits
-    // "error:1 (Expected command letter)" on every poll. Strip before
-    // forwarding; everything else (line-terminated $J=, S<rpm>, single-byte
-    // realtime 0x18/0x21/0x3F/0x7E/0x85/0x90-0x9F) goes through verbatim.
-    // Heartbeat for the hang watchdog: any byte from the pendant means it's
-    // alive (status polls arrive even when idle). Clear a tripped watchdog so a
-    // recovered pendant resumes normal operation.
-    lastPendantByte = Date.now();
-    if (watchdogTripped) { watchdogTripped = false; log('pendant bytes resumed — hang-watchdog cleared'); }
-    const filtered = chunk.toString('latin1').replace(/\x11/g, '');
-    if (!filtered) return;
-    // Split off any `@`-prefix bridge commands; everything else forwards.
-    const { forward, bridgeLines } = splitter(filtered);
-    for (const line of bridgeLines) {
-      handleBridgeCommand(state, line, replyToPendant)
-        .catch((e) => log(`bridge cmd ${line} failed: ${e.message}`));
-    }
-    let out = forward;
-    // RUN LOCKOUT: while a program is streaming, a pendant LINE (e.g. an
-    // accidental dpad $J=) steals an `ok` from cncjs's char-counting sender and
-    // stalls the stream. Drop line content during running/paused; keep realtime
-    // single-byte commands (hold/resume/reset/override/status/jogcancel).
-    if (out && (state.workflowState === 'running' || state.workflowState === 'paused')) {
-      const gated = realtimeOnly(out);
-      if (gated.length !== out.length) {
-        log(`run active (${state.workflowState}) — dropped ${out.length - gated.length}B pendant line content (jog/cmd lockout); kept ${gated.length}B realtime`);
+      // Discard all data during boot-settle period (ESP32 bootloader output).
+      if (!bootSettleDone) return;
+      // Filter out XON (0x11). Pendant emits it as a flow-control kickstart
+      // before status queries (legacy FluidNC habit), but Rownd's Grbl-ESP32
+      // doesn't recognise XON — treats the byte as line content, emits
+      // "error:1 (Expected command letter)" on every poll. Strip before
+      // forwarding; everything else (line-terminated $J=, S<rpm>, single-byte
+      // realtime 0x18/0x21/0x3F/0x7E/0x85/0x90-0x9F) goes through verbatim.
+      // Heartbeat for the hang watchdog: any byte from the pendant means it's
+      // alive (status polls arrive even when idle). Clear a tripped watchdog so a
+      // recovered pendant resumes normal operation.
+      lastPendantByte = Date.now();
+      if (watchdogTripped) { watchdogTripped = false; log('pendant bytes resumed — hang-watchdog cleared'); }
+      const filtered = chunk.toString('latin1').replace(/\x11/g, '');
+      if (!filtered) return;
+      // Split off any `@`-prefix bridge commands; everything else forwards.
+      const { forward, bridgeLines } = splitter(filtered);
+      for (const line of bridgeLines) {
+        handleBridgeCommand(state, line, replyToPendant)
+          .catch((e) => log(`bridge cmd ${line} failed: ${e.message}`));
       }
-      out = gated;
-    }
-    if (out) {
-      log(`pendant>cncjs ${out.length}B  hex=${[...Buffer.from(out, 'latin1')].map((b) => b.toString(16).padStart(2, '0')).join(' ')}`);
-      const ok = state.sendRaw(out);
-      if (!ok) log('  ↳ NOT FORWARDED (no active serial port)');
-    }
+      let out = forward;
+      // RUN LOCKOUT: while a program is streaming, a pendant LINE (e.g. an
+      // accidental dpad $J=) steals an `ok` from cncjs's char-counting sender and
+      // stalls the stream. Drop line content during running/paused; keep realtime
+      // single-byte commands (hold/resume/reset/override/status/jogcancel).
+      if (out && (state.workflowState === 'running' || state.workflowState === 'paused')) {
+        const gated = realtimeOnly(out);
+        if (gated.length !== out.length) {
+          log(`run active (${state.workflowState}) — dropped ${out.length - gated.length}B pendant line content (jog/cmd lockout); kept ${gated.length}B realtime`);
+        }
+        out = gated;
+      }
+      if (out) {
+        log(`pendant>cncjs ${out.length}B  hex=${[...Buffer.from(out, 'latin1')].map((b) => b.toString(16).padStart(2, '0')).join(' ')}`);
+        const ok = state.sendRaw(out);
+        if (!ok) log('  ↳ NOT FORWARDED (no active serial port)');
+      }
     });
   }
 
@@ -766,7 +795,7 @@ async function passthroughMode(devicePath, baudRate) {
   });
   dial.on('error', (e) => log(`serial error: ${e.message}`));
   // Run forever
-  return new Promise(() => {});
+  return new Promise(() => { });
 }
 
 async function smokeTest(secret, token) {
