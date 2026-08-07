@@ -3,6 +3,11 @@
 journalctl -u rownd-pendant-bridge -f
 ls -la /dev/rownd-pendant
 lsusb
+journalctl -u rownd-pendant-bridge -f | grep -E
+
+
+echo "=== SERVİS ===" && sudo systemctl is-active rownd-pendant-bridge && echo "=== PORT ===" && ls -la /dev/rownd-pendant 2>/dev/null || echo "PORT YOK" && echo "=== USB ===" && lsusb | grep 10c4
+
 
 
 Bu kılavuz, ESP32 el çarkı ile cncjs arasındaki köprü yazılımını (`bridge.js`) Raspberry Pi'ye kurar ve systemd servisi olarak çalıştırır.
