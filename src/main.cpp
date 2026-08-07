@@ -1,6 +1,6 @@
 // ============================================================
 //  Rownd CNC Handwheel — ESP32 USB-Serial Firmware
-//  Hedef: ESP32-S3 (USB-CDC) → Raspberry Pi → bridge.js → cncjs
+//  Hedef: ESP32 (klasik) → USB → Pi → bridge.js → cncjs
 //
 //  Bu sürüm: Tek buton ile sanal jog testi (encoder olmadan).
 //  Buton basılı tutulduğu sürece X ekseni eksi yönde hareket eder.
@@ -47,10 +47,9 @@ void setup() {
     // ESP32'nin bir önceki boot nedenini bridge.js'e bildir.
     // bridge.js @RST handler'ı bunu PENDANT RESET REASON: N olarak loglar,
     // sessiz çökmeler bu şekilde teşhis edilebilir.
-    delay(100); // CDC bağlantısının oturması için kısa bekleme
-    int reason = (int)esp_reset_reason();
+    delay(200); // CDC/UART bağlantısının oturması için kısa bekleme
     Serial.print("@RST ");
-    Serial.print(reason);
+    Serial.print((int)esp_reset_reason());
     Serial.print("\n");
 
     pinMode(BUTTON_PIN, INPUT_PULLUP);
@@ -97,8 +96,6 @@ void loop() {
 
             // $J= : Grbl'ın jogging komutu. G-Code programı sayılmaz,
             // cncjs sender'ın ok sayacını tüketmez. G91=artımlı, G21=mm.
-            // Protokol: standart komut → sonuna \n OLMALI; println() \r\n ekler
-            // ama bridge.js splitter \r'ı temizler; yine de temiz \n gönderelim.
             String cmd = "$J=G91G21X" + String(distance, 2) + "F" + String(JOG_FEED_RATE) + "\n";
             Serial.print(cmd);
 
@@ -109,8 +106,8 @@ void loop() {
     // ── 5. GELİŞ BUFFER TEMİZLİĞİ ────────────────────────────
     // bridge.js tarafından gönderilen "ok", "<Idle|MPos:...>" vb.
     // cevapları okuyarak Serial buffer'ın dolmasını engelle.
-    // İleride ekrana yazdırmak için bu bölümü genişlet.
+    // İleride ekrana yazdırmak istersen burayı kullanacaksın.
     while (Serial.available() > 0) {
-        Serial.read(); // Şimdilik sadece boşalt
+        Serial.read();
     }
 }
