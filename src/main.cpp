@@ -165,32 +165,41 @@ void parseStatusLine(const char* line) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// TFT EKRAN GÜNCELLEMESİ (ST7735 128x128)
-// Çalışan test kodundaki API ile birebir uyumlu:
-//   tft.fillRect / fillScreen / setCursor / setTextColor / setTextSize / print
+// TFT EKRAN GÜNCELLEMESİ (ST7735 128x160)
+// ─────────────────────────────────────────────────────────────
+// Layout:
+//   y=  0–18 : Başlık şeridi
+//   y= 22–46 : Makine durumu (text 2)
+//   y= 48    : Ayırıcı
+//   y= 54–74 : X koordinatı  (text 2)
+//   y= 80–100: Y koordinatı  (text 2)
+//   y=106–126: Z koordinatı  (text 2)
+//   y=130    : Ayırıcı
+//   y=134–142: Step bilgisi  (text 1)
+//   y=148–156: Feed hızı     (text 1)
 // ─────────────────────────────────────────────────────────────
 void updateDisplay() {
     char buf[20];
 
-    // Durum rengini belirle
+    // Durum rengi
     uint16_t stateColor = ST77XX_WHITE;
     if      (strncmp(machineStatus.state, "Alarm", 5) == 0) stateColor = ST77XX_RED;
     else if (strncmp(machineStatus.state, "Jog",   3) == 0) stateColor = ST77XX_YELLOW;
     else if (strncmp(machineStatus.state, "Run",   3) == 0) stateColor = ST77XX_YELLOW;
-    else if (strncmp(machineStatus.state, "Hold",  4) == 0) stateColor = 0xFD20;  // turuncu
+    else if (strncmp(machineStatus.state, "Hold",  4) == 0) stateColor = 0xFD20;
 
-    // ── Başlık şeridi (y=0, h=16) ────────────────────────────
-    tft.fillRect(0, 0, 128, 16, COLOR_HEADER);
+    // ── Başlık (y=0, h=18) ───────────────────────────────────
+    tft.fillRect(0, 0, 128, 18, COLOR_HEADER);
     tft.setTextSize(1);
     tft.setTextColor(0xAD75);
-    tft.setCursor(4, 4);
+    tft.setCursor(4, 5);
     tft.print("Rownd CNC Handwheel");
 
-    // ── Makine Durumu (y=18, h=26) ───────────────────────────
-    tft.fillRect(0, 18, 128, 26, ST77XX_BLACK);
+    // ── Makine Durumu (y=20, h=26) ───────────────────────────
+    tft.fillRect(0, 20, 128, 26, ST77XX_BLACK);
     tft.setTextSize(2);
     tft.setTextColor(stateColor);
-    tft.setCursor(4, 20);
+    tft.setCursor(4, 22);
     if (machineStatus.valid) {
         tft.print(machineStatus.state);
     } else {
@@ -199,61 +208,63 @@ void updateDisplay() {
     }
 
     // Ayırıcı çizgi
-    tft.drawFastHLine(0, 46, 128, 0x39E7);
+    tft.drawFastHLine(0, 48, 128, 0x39E7);
 
-    // ── X / Y / Z Koordinatları (y=50, 70, 90) ───────────────
+    // ── X / Y / Z Koordinatları (y=54, 80, 106) ──────────────
     const struct { const char* label; float val; } axes[3] = {
         { "X:", machineStatus.x },
         { "Y:", machineStatus.y },
         { "Z:", machineStatus.z },
     };
     for (int i = 0; i < 3; i++) {
-        uint8_t y = 50 + i * 20;
-        tft.fillRect(0, y, 128, 18, ST77XX_BLACK);
+        uint8_t y = 54 + i * 26;
+        tft.fillRect(0, y, 128, 22, ST77XX_BLACK);
 
-        // Cyan etiket
         tft.setTextSize(2);
-        tft.setTextColor(COLOR_LABEL);
+        tft.setTextColor(COLOR_LABEL);   // cyan etiket
         tft.setCursor(4, y);
         tft.print(axes[i].label);
 
-        // Beyaz sayısal değer
         snprintf(buf, sizeof(buf), "%8.3f", axes[i].val);
-        tft.setTextColor(ST77XX_WHITE);
+        tft.setTextColor(ST77XX_WHITE);  // beyaz değer
         tft.setCursor(28, y);
         tft.print(buf);
     }
 
-    // ── Alt bilgi: jog adımı (y=112) ─────────────────────────
-    tft.drawFastHLine(0, 112, 128, 0x39E7);
-    tft.fillRect(0, 114, 128, 14, ST77XX_BLACK);
+    // ── Alt bilgi (y=130+) ────────────────────────────────────
+    tft.drawFastHLine(0, 130, 128, 0x39E7);
+    tft.fillRect(0, 132, 128, 28, ST77XX_BLACK);
     tft.setTextSize(1);
     tft.setTextColor(0xAD75);
-    tft.setCursor(4, 118);
-    snprintf(buf, sizeof(buf), "Step:%.2fmm  F:%d", JOG_STEP_MM, JOG_FEED_RATE);
+    tft.setCursor(4, 136);
+    snprintf(buf, sizeof(buf), "Step : %.2f mm", JOG_STEP_MM);
+    tft.print(buf);
+    tft.setCursor(4, 148);
+    snprintf(buf, sizeof(buf), "Feed : %d mm/min", JOG_FEED_RATE);
     tft.print(buf);
 }
+
 
 
 // ─────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(SERIAL_BAUD_RATE);
 
-    // TFT başlat (1.44" ST7735 128x128)
-    tft.initR(INITR_144GREENTAB);  // Yeşil tab (bazı modeller INITR_BLACKTAB)
-    tft.setRotation(0);            // 0-3 arası, ekran yönüne göre ayarla
+    // TFT başlat (1.8" / 128x160 ST7735)
+    tft.initR(INITR_BLACKTAB);  // 128x160 modüller için BLACKTAB
+    tft.setRotation(0);          // 0-3 arası, ekran yönüne göre ayarla
     tft.fillScreen(COLOR_BG);
 
-    // Hoaşgeldin ekranı
+    // Hoşgeldin ekranı (128x160 ortasına yerleştirilmiş)
     tft.setTextSize(2);
     tft.setTextColor(COLOR_LABEL);
-    tft.setCursor(8, 30);
+    tft.setCursor(8, 50);
     tft.print("Rownd CNC");
     tft.setTextSize(1);
     tft.setTextColor(0xAD75);
-    tft.setCursor(20, 56);
+    tft.setCursor(18, 76);
     tft.print("Handwheel v1.0");
-    tft.setCursor(28, 72);
+    tft.setCursor(26, 92);
     tft.print("Baslaniyor...");
 
     // Boot nedenini bridge.js'e bildir
