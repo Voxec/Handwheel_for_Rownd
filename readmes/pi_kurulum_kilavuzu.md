@@ -8,12 +8,14 @@ journalctl -u rownd-pendant-bridge -f
 ls -la /dev/rownd-pendant
 lsusb
 journalctl -u rownd-pendant-bridge -f | grep -E
-
+sudo systemctl restart rownd-pendant-bridge
 
 echo "=== SERVİS ===" && sudo systemctl is-active rownd-pendant-bridge && echo "=== PORT ===" && ls -la /dev/rownd-pendant 2>/dev/null || echo "PORT YOK" && echo "=== USB ===" && lsusb | grep 10c4
 
+https://abamaelektronik.com.tr/urun/el-carki-gobegi-cap-60/
 
 
+raspberry açıldıktan sonra, rownd app otomatik açılır, ama handwheelin algılanamsı için uygulamayı kapatıp tekrar açmak gerekiyor.
 
 
 

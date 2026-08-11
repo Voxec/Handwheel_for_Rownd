@@ -62,6 +62,10 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 #define ENC_DT_PIN    27   // HW-040 DT  (B fazı)
 #define ENC_SW_PIN    4    // HW-040 SW  (Buton — ileride eksen/mod seçimi)
 
+// ── Potansiyometre Pin Tanımları ─────────────────────────────
+#define AXIS_POT_PIN  34   // Eksen seçim potansiyometresi (OFF, X, Y, Z)
+#define MULT_POT_PIN  35   // Çözünürlük seçim potansiyometresi (0.01, 0.1, 1.0)
+
 // ── Protokol Sabitleri ───────────────────────────────────────
 #define SERIAL_BAUD_RATE        115200  // bridge.js ile eşleşmeli
 
@@ -73,7 +77,12 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 // ── Accumulator Ayarları ─────────────────────────────────────
 #define JOG_INTERVAL_MS         150    // Paket yollama periyodu (ms)
 #define JOG_FEED_RATE           300    // Jog besleme hızı (mm/dak)
-#define JOG_STEP_MM             0.05f   // Fiziksel tık başına mesafe (mm)
+
+// ── Dinamik Ayarlar (Potansiyometrelerden okunur) ────────────
+static float currentStepMM    = 0.01f;
+static char  selectedAxis     = 'O';   // 'O'=OFF, 'X', 'Y', 'Z'
+static float lastStepMM       = -1.0f; // UI güncelleme takibi
+static char  lastSelectedAxis = 'U';   // UI güncelleme takibi
 
 // ── Debounce ─────────────────────────────────────────────────
 #define DEBOUNCE_DELAY_MS       50
@@ -100,7 +109,7 @@ static int           stableButtonState = HIGH;
 // Bridge.js → ESP32 yönünde gelen durum raporundan parse edilir.
 struct MachineStatus {
     char  state[12];  // "Idle", "Jog", "Run", "Alarm", "Hold"...
-    float x, y, z;
+    float x, z, c;
     bool  valid;      // İlk geçerli veri gelene kadar false
 };
 static MachineStatus machineStatus = { "---", 0.0f, 0.0f, 0.0f, false };
@@ -161,10 +170,10 @@ void parseStatusLine(const char* line) {
     machineStatus.x = atof(mpos);
     const char* c1 = strchr(mpos, ',');
     if (!c1) return;
-    machineStatus.y = atof(c1 + 1);
+    machineStatus.z = atof(c1 + 1); // 2. değer (Z)
     const char* c2 = strchr(c1 + 1, ',');
     if (!c2) return;
-    machineStatus.z = atof(c2 + 1);
+    machineStatus.c = atof(c2 + 1); // 3. değer (C)
 
     machineStatus.valid = true;
 }
@@ -189,36 +198,26 @@ void updateDisplay() {
     // İlk çağrıda hoşgeldin ekranını tamamen sil, sabit çerçeveyi çiz
     if (!tftReady) {
         tft.fillScreen(ST77XX_BLACK);
-
-        // Sabit başlık şeridi (sadece bir kez çiziliyor)
-        tft.fillRect(0, 0, 128, 18, COLOR_HEADER);
-        tft.setTextSize(1);
-        tft.setTextColor(0xAD75);
-        tft.setCursor(4, 5);
-        tft.print("Rownd CNC Handwheel");
-
         // Sabit ayırıcı çizgiler
         tft.drawFastHLine(0, 48, 128, 0x39E7);
         tft.drawFastHLine(0, 130, 128, 0x39E7);
-
-        // Sabit etiketler (X:/Y:/Z:)
-        tft.setTextSize(2);
-        tft.setTextColor(COLOR_LABEL);
-        tft.setCursor(4, 54); tft.print("X:");
-        tft.setCursor(4, 80); tft.print("Y:");
-        tft.setCursor(4, 106); tft.print("Z:");
-
-        // Sabit alt bilgi
-        tft.setTextSize(1);
-        tft.setTextColor(0xAD75);
-        tft.setCursor(4, 136);
-        snprintf(buf, sizeof(buf), "Step : %.2f mm", JOG_STEP_MM);
-        tft.print(buf);
-        tft.setCursor(4, 148);
-        snprintf(buf, sizeof(buf), "Feed : %d mm/min", JOG_FEED_RATE);
-        tft.print(buf);
-
         tftReady = true;
+    }
+
+    // ── Başlık Şeridi (Dinamik) ──────────────────────────────
+    static char lastHeaderState = 'U';
+    if (selectedAxis != lastHeaderState) {
+        tft.fillRect(0, 0, 128, 18, COLOR_HEADER);
+        tft.setTextSize(1);
+        tft.setCursor(4, 5);
+        if (selectedAxis == 'O') {
+            tft.setTextColor(ST77XX_RED);
+            tft.print("HANDWHEEL: OFF");
+        } else {
+            tft.setTextColor(0xAD75);
+            tft.print("Rownd CNC Handwheel");
+        }
+        lastHeaderState = selectedAxis;
     }
 
     // Durum rengi
@@ -228,7 +227,7 @@ void updateDisplay() {
     else if (strncmp(machineStatus.state, "Run",   3) == 0) stateColor = ST77XX_YELLOW;
     else if (strncmp(machineStatus.state, "Hold",  4) == 0) stateColor = 0xFD20;
 
-    // ── Makine Durumu (y=20, h=26) ── sadece bu alan güncelleniyor
+    // ── Makine Durumu (y=20, h=26) ───────────────────────────
     tft.fillRect(0, 20, 128, 26, ST77XX_BLACK);
     tft.setTextSize(2);
     tft.setTextColor(stateColor);
@@ -240,22 +239,51 @@ void updateDisplay() {
         tft.print("Bekliyor..");
     }
 
-    // ── X / Y / Z Koordinat Değerleri (sadece sayılar değişiyor) ─
-
-    // ── X / Y / Z: sadece sayısal değer alanını temizle+güncelle
-    // Etiketler (X:/Y:/Z:) ilk çizimde yazıldı, sabit kalıyor.
-    const float vals[3] = { machineStatus.x, machineStatus.y, machineStatus.z };
+    // ── X / Z / C Koordinatları ve Seçili Eksen Vurgusu ──────
+    const float vals[3] = { machineStatus.x, machineStatus.z, machineStatus.c };
+    const char axesChars[3] = { 'X', 'Z', 'C' };
+    
     for (int i = 0; i < 3; i++) {
         uint8_t y = 54 + i * 26;
-        // Sadece değer alanını sil (x=28'den itibaren, etiket x=4-27 arasında)
-        tft.fillRect(28, y, 100, 20, ST77XX_BLACK);
-        snprintf(buf, sizeof(buf), "%8.3f", vals[i]);
+        bool isActive = (selectedAxis == axesChars[i]);
+        
+        // Aktif ise lacivert (0x01CF) arka plan, değilse siyah
+        uint16_t bgColor = isActive ? 0x01CF : ST77XX_BLACK;
+        uint16_t labelColor = isActive ? ST77XX_YELLOW : COLOR_LABEL;
+        uint16_t valColor = isActive ? ST77XX_WHITE : 0xAD75;
+
+        // Tüm satırı (128x22) arka plan rengiyle boya (highlight)
+        tft.fillRect(0, y, 128, 22, bgColor);
+
         tft.setTextSize(2);
-        tft.setTextColor(ST77XX_WHITE);
-        tft.setCursor(28, y);
+        tft.setTextColor(labelColor);
+        
+        // Metni dikeyde ortalamak için y+4 kullanıyoruz (Kutu h=22, Metin h=14)
+        tft.setCursor(isActive ? 0 : 4, y + 4);
+        if (isActive) tft.print(">");
+        tft.print(axesChars[i]);
+        tft.print(":");
+
+        snprintf(buf, sizeof(buf), "%8.3f", vals[i]);
+        tft.setTextColor(valColor);
+        tft.setCursor(28, y + 4);
         tft.print(buf);
     }
-    // Alt bilgi sabit (ilk çizimde yazıldı) — her update'te yeniden çizilmiyor
+
+    // ── Alt bilgi: Step/Feed ─────────────────────────────────
+    static float lastPrintedStep = -1.0f;
+    if (currentStepMM != lastPrintedStep) {
+        tft.fillRect(0, 132, 128, 28, ST77XX_BLACK);
+        tft.setTextSize(1);
+        tft.setTextColor(0xAD75);
+        tft.setCursor(4, 136);
+        snprintf(buf, sizeof(buf), "Step : %.2f mm", currentStepMM);
+        tft.print(buf);
+        tft.setCursor(4, 148);
+        snprintf(buf, sizeof(buf), "Feed : %d mm/min", JOG_FEED_RATE);
+        tft.print(buf);
+        lastPrintedStep = currentStepMM;
+    }
 }
 
 
@@ -296,9 +324,81 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(ENC_DT_PIN),  handleEncoderChange, CHANGE);
 }
 
+// ── Potansiyometre Filtresi (Ortalama ve Hysteresis) ──────────
+int readAnalogFiltered(uint8_t pin) {
+    long sum = 0;
+    for (int i = 0; i < 16; i++) {
+        sum += analogRead(pin);
+    }
+    return sum / 16;
+}
+
+char getAxisState(int adcVal, char currentState) {
+    const int margin = 80; // Titremeyi önlemek için tolerans payı
+    
+    if (currentState == 'O') {
+        if (adcVal > 1024 + margin) return 'X';
+    } else if (currentState == 'X') {
+        if (adcVal < 1024 - margin) return 'O';
+        if (adcVal > 2048 + margin) return 'Z';
+    } else if (currentState == 'Z') {
+        if (adcVal < 2048 - margin) return 'X';
+        if (adcVal > 3072 + margin) return 'C';
+    } else if (currentState == 'C') {
+        if (adcVal < 3072 - margin) return 'Z';
+    }
+    
+    // İlk okuma
+    if (currentState == 'U') {
+        if      (adcVal < 1024) return 'O';
+        else if (adcVal < 2048) return 'X';
+        else if (adcVal < 3072) return 'Z';
+        else                    return 'C';
+    }
+    return currentState;
+}
+
+float getMultState(int adcVal, float currentMult) {
+    const int margin = 80;
+    
+    if (currentMult == 0.01f) {
+        if (adcVal > 1365 + margin) return 0.10f;
+    } else if (currentMult == 0.10f) {
+        if (adcVal < 1365 - margin) return 0.01f;
+        if (adcVal > 2730 + margin) return 1.00f;
+    } else if (currentMult == 1.00f) {
+        if (adcVal < 2730 - margin) return 0.10f;
+    }
+    
+    // İlk okuma
+    if (currentMult < 0.0f) {
+        if      (adcVal < 1365) return 0.01f;
+        else if (adcVal < 2730) return 0.10f;
+        else                    return 1.00f;
+    }
+    return currentMult;
+}
+
 // ─────────────────────────────────────────────────────────────
 void loop() {
     unsigned long now = millis();
+
+    // ── 0. POTANSİYOMETRE OKUMA ───────────────────────────────
+    // Gürültüyü önlemek için ortalama alınır ve eşiklerde hysteresis uygulanır
+    int axisVal = readAnalogFiltered(AXIS_POT_PIN);
+    selectedAxis = getAxisState(axisVal, lastSelectedAxis);
+
+    int multVal = readAnalogFiltered(MULT_POT_PIN);
+    currentStepMM = getMultState(multVal, lastStepMM);
+
+    // Eğer potansiyometrelerden biri değişirse ekranı beklemeden güncelle
+    if (selectedAxis != lastSelectedAxis || currentStepMM != lastStepMM) {
+        if (tftReady) { // Sadece ekran hazır olduktan sonra
+            updateDisplay();
+        }
+        lastSelectedAxis = selectedAxis;
+        lastStepMM = currentStepMM;
+    }
 
     // ── 1. WATCHDOG ───────────────────────────────────────────
     if (now - lastHeartbeatTime >= HEARTBEAT_INTERVAL_MS) {
@@ -334,15 +434,15 @@ void loop() {
         encoderRaw += remainder;
         interrupts();
 
-        if (detents != 0) {
-            float distance = detents * JOG_STEP_MM;
+        if (detents != 0 && selectedAxis != 'O') {
+            float distance = detents * currentStepMM;
 
             // $J= : Grbl jogging komutu
             //   G91 = artımlı mod, G21 = mm birimi
             //   Sonuna \n OLMALI (standart G-code satırı)
-            //   CW → detents pozitif → X pozitif (makine sağa)
-            //   CCW → detents negatif → X negatif (makine sola)
-            String cmd = "$J=G91G21X" + String(distance, 2) + "F" + String(JOG_FEED_RATE) + "\n";
+            //   CW → detents pozitif → eksen pozitif yönde
+            //   CCW → detents negatif → eksen negatif yönde
+            String cmd = "$J=G91G21" + String(selectedAxis) + String(distance, 2) + "F" + String(JOG_FEED_RATE) + "\n";
             Serial.print(cmd);
         }
     }
