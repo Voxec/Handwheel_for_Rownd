@@ -170,10 +170,10 @@ void parseStatusLine(const char* line) {
     machineStatus.x = atof(mpos);
     const char* c1 = strchr(mpos, ',');
     if (!c1) return;
-    machineStatus.z = atof(c1 + 1); // 2. değer (Z)
+    machineStatus.c = atof(c1 + 1); // 2. değer (C ekseni)
     const char* c2 = strchr(c1 + 1, ',');
     if (!c2) return;
-    machineStatus.c = atof(c2 + 1); // 3. değer (C)
+    machineStatus.z = atof(c2 + 1); // 3. değer (Z ekseni)
 
     machineStatus.valid = true;
 }
