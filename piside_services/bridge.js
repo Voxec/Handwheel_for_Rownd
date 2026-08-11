@@ -164,7 +164,7 @@ function connectCncjs(port, token, panelServer) {
     listPollTimer = setInterval(() => {
       if (state.serialPort) { stopListPoll(); return; }
       sock.emit('list');
-    }, 2000);
+    }, 500);  // 500ms: boot'ta hızlı port tespiti için (eski: 2000ms)
   });
 
   sock.on('disconnect', (reason) => {

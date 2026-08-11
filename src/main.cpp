@@ -78,6 +78,11 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 // ── Debounce ─────────────────────────────────────────────────
 #define DEBOUNCE_DELAY_MS       50
 
+// ── Ekran Hazır Bayrağı ────────────────────────────────
+// İlk updateDisplay() çağrısında hoşgeldin ekranını silip temiz başlat.
+// Sonraki çağrılarda partial fillRect ile güncelleme yapılır.
+static bool tftReady = false;
+
 // ── Encoder ISR Değişkenleri ─────────────────────────────────
 // Her fiziksel tıkta quadrature state machine 4 geçiş üretir.
 // Gerçek detent sayısı = encoderRaw / 4
@@ -181,6 +186,41 @@ void parseStatusLine(const char* line) {
 void updateDisplay() {
     char buf[20];
 
+    // İlk çağrıda hoşgeldin ekranını tamamen sil, sabit çerçeveyi çiz
+    if (!tftReady) {
+        tft.fillScreen(ST77XX_BLACK);
+
+        // Sabit başlık şeridi (sadece bir kez çiziliyor)
+        tft.fillRect(0, 0, 128, 18, COLOR_HEADER);
+        tft.setTextSize(1);
+        tft.setTextColor(0xAD75);
+        tft.setCursor(4, 5);
+        tft.print("Rownd CNC Handwheel");
+
+        // Sabit ayırıcı çizgiler
+        tft.drawFastHLine(0, 48, 128, 0x39E7);
+        tft.drawFastHLine(0, 130, 128, 0x39E7);
+
+        // Sabit etiketler (X:/Y:/Z:)
+        tft.setTextSize(2);
+        tft.setTextColor(COLOR_LABEL);
+        tft.setCursor(4, 54); tft.print("X:");
+        tft.setCursor(4, 80); tft.print("Y:");
+        tft.setCursor(4, 106); tft.print("Z:");
+
+        // Sabit alt bilgi
+        tft.setTextSize(1);
+        tft.setTextColor(0xAD75);
+        tft.setCursor(4, 136);
+        snprintf(buf, sizeof(buf), "Step : %.2f mm", JOG_STEP_MM);
+        tft.print(buf);
+        tft.setCursor(4, 148);
+        snprintf(buf, sizeof(buf), "Feed : %d mm/min", JOG_FEED_RATE);
+        tft.print(buf);
+
+        tftReady = true;
+    }
+
     // Durum rengi
     uint16_t stateColor = ST77XX_WHITE;
     if      (strncmp(machineStatus.state, "Alarm", 5) == 0) stateColor = ST77XX_RED;
@@ -188,14 +228,7 @@ void updateDisplay() {
     else if (strncmp(machineStatus.state, "Run",   3) == 0) stateColor = ST77XX_YELLOW;
     else if (strncmp(machineStatus.state, "Hold",  4) == 0) stateColor = 0xFD20;
 
-    // ── Başlık (y=0, h=18) ───────────────────────────────────
-    tft.fillRect(0, 0, 128, 18, COLOR_HEADER);
-    tft.setTextSize(1);
-    tft.setTextColor(0xAD75);
-    tft.setCursor(4, 5);
-    tft.print("Rownd CNC Handwheel");
-
-    // ── Makine Durumu (y=20, h=26) ───────────────────────────
+    // ── Makine Durumu (y=20, h=26) ── sadece bu alan güncelleniyor
     tft.fillRect(0, 20, 128, 26, ST77XX_BLACK);
     tft.setTextSize(2);
     tft.setTextColor(stateColor);
@@ -207,41 +240,22 @@ void updateDisplay() {
         tft.print("Bekliyor..");
     }
 
-    // Ayırıcı çizgi
-    tft.drawFastHLine(0, 48, 128, 0x39E7);
+    // ── X / Y / Z Koordinat Değerleri (sadece sayılar değişiyor) ─
 
-    // ── X / Y / Z Koordinatları (y=54, 80, 106) ──────────────
-    const struct { const char* label; float val; } axes[3] = {
-        { "X:", machineStatus.x },
-        { "Y:", machineStatus.y },
-        { "Z:", machineStatus.z },
-    };
+    // ── X / Y / Z: sadece sayısal değer alanını temizle+güncelle
+    // Etiketler (X:/Y:/Z:) ilk çizimde yazıldı, sabit kalıyor.
+    const float vals[3] = { machineStatus.x, machineStatus.y, machineStatus.z };
     for (int i = 0; i < 3; i++) {
         uint8_t y = 54 + i * 26;
-        tft.fillRect(0, y, 128, 22, ST77XX_BLACK);
-
+        // Sadece değer alanını sil (x=28'den itibaren, etiket x=4-27 arasında)
+        tft.fillRect(28, y, 100, 20, ST77XX_BLACK);
+        snprintf(buf, sizeof(buf), "%8.3f", vals[i]);
         tft.setTextSize(2);
-        tft.setTextColor(COLOR_LABEL);   // cyan etiket
-        tft.setCursor(4, y);
-        tft.print(axes[i].label);
-
-        snprintf(buf, sizeof(buf), "%8.3f", axes[i].val);
-        tft.setTextColor(ST77XX_WHITE);  // beyaz değer
+        tft.setTextColor(ST77XX_WHITE);
         tft.setCursor(28, y);
         tft.print(buf);
     }
-
-    // ── Alt bilgi (y=130+) ────────────────────────────────────
-    tft.drawFastHLine(0, 130, 128, 0x39E7);
-    tft.fillRect(0, 132, 128, 28, ST77XX_BLACK);
-    tft.setTextSize(1);
-    tft.setTextColor(0xAD75);
-    tft.setCursor(4, 136);
-    snprintf(buf, sizeof(buf), "Step : %.2f mm", JOG_STEP_MM);
-    tft.print(buf);
-    tft.setCursor(4, 148);
-    snprintf(buf, sizeof(buf), "Feed : %d mm/min", JOG_FEED_RATE);
-    tft.print(buf);
+    // Alt bilgi sabit (ilk çizimde yazıldı) — her update'te yeniden çizilmiyor
 }
 
 

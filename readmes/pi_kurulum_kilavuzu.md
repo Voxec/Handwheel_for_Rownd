@@ -1,5 +1,9 @@
 # Pi Kurulum Kılavuzu — `bridge.js` (Raspberry Pi)
 
+/opt/rownd-pendant-bridge   :   pi file locations
+.service file should be transferred to /etc/systemd/system/ location 
+
+
 journalctl -u rownd-pendant-bridge -f
 ls -la /dev/rownd-pendant
 lsusb
@@ -7,6 +11,9 @@ journalctl -u rownd-pendant-bridge -f | grep -E
 
 
 echo "=== SERVİS ===" && sudo systemctl is-active rownd-pendant-bridge && echo "=== PORT ===" && ls -la /dev/rownd-pendant 2>/dev/null || echo "PORT YOK" && echo "=== USB ===" && lsusb | grep 10c4
+
+
+
 
 
 
