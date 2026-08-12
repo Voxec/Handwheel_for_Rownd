@@ -76,7 +76,7 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 
 // ── Accumulator Ayarları ─────────────────────────────────────
 #define JOG_INTERVAL_MS         150    // Paket yollama periyodu (ms)
-#define JOG_FEED_RATE           300    // Jog besleme hızı (mm/dak)
+#define JOG_FEED_RATE           700    // Jog besleme hızı (mm/dak)
 
 // ── Dinamik Ayarlar (Potansiyometrelerden okunur) ────────────
 static float currentStepMM    = 0.01f;
@@ -277,7 +277,7 @@ void updateDisplay() {
         tft.setTextSize(1);
         tft.setTextColor(0xAD75);
         tft.setCursor(4, 136);
-        snprintf(buf, sizeof(buf), "Step : %.2f mm", currentStepMM);
+        snprintf(buf, sizeof(buf), "Step : %.3f mm", currentStepMM);
         tft.print(buf);
         tft.setCursor(4, 148);
         snprintf(buf, sizeof(buf), "Feed : %d mm/min", JOG_FEED_RATE);
@@ -337,43 +337,51 @@ char getAxisState(int adcVal, char currentState) {
     const int margin = 80; // Titremeyi önlemek için tolerans payı
     
     if (currentState == 'O') {
-        if (adcVal > 1024 + margin) return 'X';
+        if (adcVal > 400 + margin) return 'X';
     } else if (currentState == 'X') {
-        if (adcVal < 1024 - margin) return 'O';
-        if (adcVal > 2048 + margin) return 'Z';
+        if (adcVal < 400 - margin) return 'O';
+        if (adcVal > 1632 + margin) return 'Z';
     } else if (currentState == 'Z') {
-        if (adcVal < 2048 - margin) return 'X';
-        if (adcVal > 3072 + margin) return 'C';
+        if (adcVal < 1632 - margin) return 'X';
+        if (adcVal > 2864 + margin) return 'C';
     } else if (currentState == 'C') {
-        if (adcVal < 3072 - margin) return 'Z';
+        if (adcVal < 2864 - margin) return 'Z';
     }
     
     // İlk okuma
     if (currentState == 'U') {
-        if      (adcVal < 1024) return 'O';
-        else if (adcVal < 2048) return 'X';
-        else if (adcVal < 3072) return 'Z';
-        else                    return 'C';
+        if      (adcVal < 400) return 'O';
+        else if (adcVal < 1632) return 'X';
+        else if (adcVal < 2864) return 'Z';
+        else                   return 'C';
     }
     return currentState;
 }
 
-float getMultState(int adcVal, float currentMult) {
+float getMultState(int rawAdc, float currentMult) {
     const int margin = 80;
     
-    if (currentMult == 0.01f) {
-        if (adcVal > 1365 + margin) return 0.10f;
+    // Potansiyometre bağlantısı fiziksel olarak ters ise (sol = 4095, sağ = 0)
+    // Değeri yazılımsal olarak tersine çeviriyoruz:
+    int adcVal = 4095 - rawAdc;
+    
+    if (currentMult == 0.001f) {
+        if (adcVal > 1024 + margin) return 0.01f;
+    } else if (currentMult == 0.01f) {
+        if (adcVal < 1024 - margin) return 0.001f;
+        if (adcVal > 2048 + margin) return 0.10f;
     } else if (currentMult == 0.10f) {
-        if (adcVal < 1365 - margin) return 0.01f;
-        if (adcVal > 2730 + margin) return 1.00f;
+        if (adcVal < 2048 - margin) return 0.01f;
+        if (adcVal > 3072 + margin) return 1.00f;
     } else if (currentMult == 1.00f) {
-        if (adcVal < 2730 - margin) return 0.10f;
+        if (adcVal < 3072 - margin) return 0.10f;
     }
     
     // İlk okuma
     if (currentMult < 0.0f) {
-        if      (adcVal < 1365) return 0.01f;
-        else if (adcVal < 2730) return 0.10f;
+        if      (adcVal < 1024) return 0.001f;
+        else if (adcVal < 2048) return 0.01f;
+        else if (adcVal < 3072) return 0.10f;
         else                    return 1.00f;
     }
     return currentMult;
@@ -442,7 +450,7 @@ void loop() {
             //   Sonuna \n OLMALI (standart G-code satırı)
             //   CW → detents pozitif → eksen pozitif yönde
             //   CCW → detents negatif → eksen negatif yönde
-            String cmd = "$J=G91G21" + String(selectedAxis) + String(distance, 2) + "F" + String(JOG_FEED_RATE) + "\n";
+            String cmd = "$J=G91G21" + String(selectedAxis) + String(distance, 3) + "F" + String(JOG_FEED_RATE) + "\n";
             Serial.print(cmd);
         }
     }
