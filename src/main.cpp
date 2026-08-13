@@ -1,4 +1,15 @@
 // ============================================================
+//
+//  Kaan Ayyıldız - Rownd Precision Temmuz-Ağustos 2026 Stajyeri 
+
+//  Sabit Feed rate: 700 mm/dak, Step: 0.01/0.1/1.0 mm CNC Torna El Çarkı.
+//  Metal çark geldiği zaman yeni 3d tasarım yapılmalı ve step/mult potansiyometreleri eklenmelidir.
+//  Proje 3D çizim dosyaları Ömer Faruk Coşkun tarafından hazırlanmıştır.
+//  Pi bridge.js ile CNCjs arasında USB-Serial köprü görevi görür. ESP32, USB üzerinden Pi'ye bağlanır ve bridge.js ile CNCjs'e veri aktarır.
+//  Kurulum için: pi_kurulum_klavuzu.md dosyasına bakınız.
+//  Tarih: 28.07.2026
+//
+// ============================================================
 //  Rownd CNC Handwheel — ESP32 USB-Serial Firmware
 //  Donanım: HW-040 Encoder + 1.44" ST7735 TFT (SPI, 128x128)
 //  Hedef:   ESP32 → USB → Pi → bridge.js → cncjs
