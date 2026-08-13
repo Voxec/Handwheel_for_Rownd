@@ -1,3 +1,11 @@
+// ============================================================
+//  DEPRECATED — BLE MİMARİSİ (KULLANILMIYOR)
+//
+//  Bu dosya USB-Serial mimarisine geçişten önce kullanılıyordu.
+//  main.cpp artık bu dosyayı include ETMİYOR.
+//  Git tarihçesi için silinmedi; referans olarak bırakıldı.
+//  Yeni mimari: ESP32 → USB-CDC → Raspberry Pi → bridge.js → cncjs
+// ============================================================
 #ifndef BLE_CLIENT_HPP
 #define BLE_CLIENT_HPP
 
